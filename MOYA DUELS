@@ -2377,85 +2377,146 @@ end
 startBatAimbot=function()
     LPH_ATTRIBUTES(VM(NONE))
     if _G.S2SafeModeTryStart and not _G.S2SafeModeTryStart() then return end
-    if aimbotConn then aimbotConn:Disconnect() end;autoBatEnabled=true
-    if autoLeftEnabled then autoLeftEnabled=false;if autoLeftSetVisual then autoLeftSetVisual(false) end;stopAutoLeft() end
-    if autoRightEnabled then autoRightEnabled=false;if autoRightSetVisual then autoRightSetVisual(false) end;stopAutoRight() end
-    if autoPlayEnabled then stopAutoPlay() end
-    if autoTPConn then task.cancel(autoTPConn);autoTPConn=nil end
 
-    local char=LP.Character;if not char then return end
-    local root=char:FindFirstChild("HumanoidRootPart");local hum0=char:FindFirstChildOfClass("Humanoid")
-    if not root or not hum0 then return end;hum0.AutoRotate=false
+    if aimbotConn then
+        aimbotConn:Disconnect()
+        aimbotConn=nil
+    end
+    autoBatEnabled=true
 
-    local VYSE_HIT_DIST=15
+    local char=LP.Character
+    if not char then
+        autoBatEnabled=false
+        return
+    end
+
+    local root=char:FindFirstChild("HumanoidRootPart")
+    local hum=char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then
+        autoBatEnabled=false
+        return
+    end
+
+    -- Same core chase values used by the working ACE BAT AIMBOT.
+    local SPEED=56
+    local VERT_SPEED=52
+    local DIST=-2.8
+    local HEIGHT=4.75
+    local TURN_SPEED=285
+    local MAX_TURN_RATE=28
+    local HIT_DIST=8
+
+    hum.AutoRotate=false
 
     aimbotConn=RunService.RenderStepped:Connect(function()
         LPH_ATTRIBUTES(VM(NONE))
-        pcall(function()
-        LPH_ATTRIBUTES(VM(NONE))
         if not autoBatEnabled then return end
-        local c=LP.Character;if not c then return end
-        local hrp=c:FindFirstChild("HumanoidRootPart");if not hrp then return end
-        local hum=c:FindFirstChildOfClass("Humanoid");if not hum then return end
-        hum.AutoRotate=false
 
-        if not c:FindFirstChildOfClass("Tool") then
-            local bat=findBat()
-            if bat then pcall(function() hum:EquipTool(bat) end) end
-        end
+        pcall(function()
+            local c=LP.Character
+            if not c then return end
 
-        local plr,dist=getClosestPlayerAim()
-        local target=plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
-        if not target then swingCurrentBat();return end
+            local hrp=c:FindFirstChild("HumanoidRootPart")
+            local h=c:FindFirstChildOfClass("Humanoid")
+            if not hrp or not h then return end
 
-        local targetVel=target.AssemblyLinearVelocity
-        local myPos=hrp.Position
-        local targetPos=target.Position
-        local predictPos=targetPos+targetVel*0.14+target.CFrame.LookVector*0.3
-        local direction=predictPos-myPos
-        local flatDir=Vector3.new(direction.X,0,direction.Z)
-        if flatDir.Magnitude<0.05 then
-            flatDir=hrp.CFrame.LookVector
-        else
-            flatDir=flatDir.Unit
-        end
+            h.AutoRotate=false
 
-        local desiredHeight=targetPos.Y+5
-        local yVel=(desiredHeight-myPos.Y)*19.5+targetVel.Y*0.8
-        if hum.FloorMaterial~=Enum.Material.Air then yVel=math.max(yVel,13) end
-        yVel=math.clamp(yVel,-70,110)
+            -- Keep the bat equipped.
+            if not c:FindFirstChildOfClass("Tool") then
+                local bat=findBat()
+                if bat then
+                    pcall(function() h:EquipTool(bat) end)
+                end
+            end
 
-        local desiredVel=Vector3.new(flatDir.X*aimbotSpeedValue,yVel,flatDir.Z*aimbotSpeedValue)
-        hrp.AssemblyLinearVelocity=hrp.AssemblyLinearVelocity:Lerp(desiredVel,0.8)
+            -- Use MOYA's existing target finder, but the ACE movement math.
+            local plr,dist=getClosestPlayerAim()
+            local target=plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
 
-        local speed3=targetVel.Magnitude
-        local predictTime=math.clamp(speed3/150,0.05,0.2)
-        local predictedPos=targetPos+targetVel*predictTime
-        local toPredict=predictedPos-myPos
-        if toPredict.Magnitude>0.1 then
-            local goalCF=CFrame.lookAt(myPos,predictedPos)
-            local diffCF=hrp.CFrame:Inverse()*goalCF
-            local rx,ry,rz=diffCF:ToEulerAnglesXYZ()
-            rx=math.clamp(rx,-2.5,2.5);ry=math.clamp(ry,-2.5,2.5);rz=math.clamp(rz,-2.5,2.5)
-            hrp.AssemblyAngularVelocity=hrp.CFrame:VectorToWorldSpace(Vector3.new(rx*42,ry*42,rz*42))
-        end
+            if not target then
+                h.AutoRotate=true
+                hrp.AssemblyAngularVelocity=Vector3.zero
+                local v=hrp.AssemblyLinearVelocity
+                hrp.AssemblyLinearVelocity=Vector3.new(0,v.Y,0)
+                return
+            end
 
-        if dist<=VYSE_HIT_DIST then swingCurrentBat() end
+            local targetVel=target.AssemblyLinearVelocity or Vector3.zero
+            local targetPos=target.Position
+            local predicted=targetPos + targetVel*math.clamp(targetVel.Magnitude/130,0.05,0.15)
+
+            local offset=predicted-hrp.Position
+            local flat=Vector3.new(offset.X,0,offset.Z)
+
+            if flat.Magnitude>0.01 and offset.Magnitude>0.01 then
+                -- ACE-style turning toward the predicted target.
+                local yaw=math.deg(math.atan2(-flat.X,-flat.Z))
+                local delta=((yaw-hrp.Orientation.Y+180)%360)-180
+                local turn=math.clamp(math.rad(delta)*TURN_SPEED,-MAX_TURN_RATE,MAX_TURN_RATE)
+                hrp.AssemblyAngularVelocity=Vector3.new(0,turn,0)
+
+                -- ACE-style chase position.
+                local dir=flat.Unit
+                local desired=(predicted + dir*DIST + Vector3.new(0,HEIGHT,0))-hrp.Position
+                local hdir=Vector3.new(desired.X,0,desired.Z)
+
+                local speed=tonumber(aimbotSpeedValue) or SPEED
+                speed=math.clamp(speed,1,200)
+
+                local horizontal=(hdir.Magnitude>0.2) and (hdir.Unit*speed) or Vector3.zero
+                local vertical=math.clamp(desired.Y*2.5,-VERT_SPEED,VERT_SPEED)
+
+                hrp.AssemblyLinearVelocity=Vector3.new(horizontal.X,vertical,horizontal.Z)
+
+                -- Important part of the ACE implementation: Humanoid:Move
+                -- keeps Roblox's movement controller engaged instead of relying
+                -- on AssemblyLinearVelocity alone.
+                if hdir.Magnitude>0.5 then
+                    h:Move(hdir.Unit,false)
+                end
+            end
+
+            -- Swing when inside the existing MOYA hit range.
+            if autoSwingEnabled and dist<=HIT_DIST then
+                swingCurrentBat()
+            end
         end)
     end)
+
     if autoBatSetVisual then autoBatSetVisual(true) end
     if mobBtnRefs.autoBat then mobBtnRefs.autoBat(true) end
 end
+
 stopBatAimbot=function()
     LPH_ATTRIBUTES(VM(NONE))
-    if aimbotConn then aimbotConn:Disconnect();aimbotConn=nil end;autoBatEnabled=false
-    local char=LP.Character;local root=char and char:FindFirstChild("HumanoidRootPart")
-    if root then root.AssemblyLinearVelocity=Vector3.zero;root.AssemblyAngularVelocity=Vector3.zero end
-    local hum2=char and char:FindFirstChildOfClass("Humanoid");if hum2 then hum2.AutoRotate=true end
+
+    if aimbotConn then
+        aimbotConn:Disconnect()
+        aimbotConn=nil
+    end
+
+    autoBatEnabled=false
+
+    local c=LP.Character
+    local r=c and c:FindFirstChild("HumanoidRootPart")
+    local h=c and c:FindFirstChildOfClass("Humanoid")
+
+    if r then
+        r.AssemblyLinearVelocity=Vector3.zero
+        r.AssemblyAngularVelocity=Vector3.zero
+    end
+    if h then
+        h.AutoRotate=true
+        pcall(function() h:Move(Vector3.zero,false) end)
+    end
+
     if autoTPEnabled then startAutoTP() end
-    setVisual("BatAimbot",false);if autoBatSetVisual then autoBatSetVisual(false) end
+    setVisual("BatAimbot",false)
+    if autoBatSetVisual then autoBatSetVisual(false) end
     if mobBtnRefs.autoBat then mobBtnRefs.autoBat(false) end
 end
+
 startAimbotV2=function()
     LPH_ATTRIBUTES(VM(NONE))
     if aimbotV2Conn then aimbotV2Conn:Disconnect() end;aimbotV2Enabled=true
